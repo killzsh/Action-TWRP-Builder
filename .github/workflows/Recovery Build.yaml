@@ -48,9 +48,8 @@ jobs:
     runs-on: ubuntu-24.04
     permissions:
       contents: write
-
     steps:
-    - name: 📦 Display Run Parameters
+    - name: Display Run Parameters
       run: |
         echo "::group::User Environment Variables"
         echo "Manifest URL: ${{ github.event.inputs.MANIFEST_URL }}"
@@ -63,13 +62,16 @@ jobs:
         echo "Build Target: ${{ github.event.inputs.BUILD_TARGET }}.img"
         echo "::endgroup::"
 
-    - name: ⬇️ Check Out
+    # You might want to Checkout your repo first, but not mandatory
+    - name: Check Out
       uses: actions/checkout@v4
 
-    - name: 🧹 Cleanup Workspace
+    # Cleanup The Actions Workspace Using Custom Composite Run Actions
+    - name: Cleanup
       uses: rokibhasansagar/slimhub_actions@main
+      # That's it! Now use your normal steps
 
-    - name: 🛠 Prepare the Environment
+    - name: Prepare the environment
       run: |
         sudo apt update && sudo apt upgrade -y
         DEBIAN_FRONTEND=noninteractive sudo apt install -yq \
@@ -80,29 +82,29 @@ jobs:
             build-essential libgtk-3-dev libglu1-mesa-dev freeglut3-dev git libxml2 lzop pngcrush schedtool squashfs-tools \
             imagemagick libbz2-dev lzma ncftp qemu-user-static libstdc++-10-dev libncurses6 python3 tar
 
-    - name: ☕ Install OpenJDK
+    - name: Install OpenJDK
       uses: actions/setup-java@v4
       with:
         distribution: 'zulu'
         java-version: '11'
 
-    - name: 🔐 Setup SSH Keys (if needed)
+    - name: Setup SSH Keys
       if: ${{ startsWith(github.event.inputs.MANIFEST_URL, 'git@github.com') || 
-              startsWith(github.event.inputs.DEVICE_TREE_URL, 'git@github.com') ||
-              startsWith(github.event.inputs.COMMON_TREE_URL, 'git@github.com') }}
+          startsWith(github.event.inputs.DEVICE_TREE_URL, 'git@github.com') ||
+          startsWith(github.event.inputs.COMMON_TREE_URL, 'git@github.com') }}
       uses: webfactory/ssh-agent@v0.9.0
       with:
-        ssh-private-key: |
-          ${{ secrets.SSH_PRIVATE_KEY }}
+          ssh-private-key: |
+            ${{ secrets.SSH_PRIVATE_KEY }}
 
-    - name: 📥 Install Repo Tool
+    - name: Install repo
       run: |
         mkdir ~/bin
         curl https://storage.googleapis.com/git-repo-downloads/repo > ~/bin/repo
         chmod a+x ~/bin/repo
         sudo ln -sf ~/bin/repo /usr/bin/repo
 
-    - name: 📁 Initialize Repo
+    - name: Initialize repo
       run: |
         mkdir workspace
         cd workspace
@@ -112,17 +114,17 @@ jobs:
         repo init --depth=1 -u ${{ github.event.inputs.MANIFEST_URL }} -b ${{ github.event.inputs.MANIFEST_BRANCH }}
       id: pwd
 
-    - name: 🔄 Sync Repo
+    - name: Repo Sync
       run: |
         repo sync -j$(nproc --all) --force-sync
       working-directory: workspace
 
-    - name: 📦 Clone Device Tree
+    - name: Clone device tree
       run: |
         git clone ${{ github.event.inputs.DEVICE_TREE_URL }} -b ${{ github.event.inputs.DEVICE_TREE_BRANCH }} ./${{ github.event.inputs.DEVICE_PATH }}
       working-directory: ${{ steps.pwd.outputs.workspace-folder }}
 
-    - name: 🌲 Clone Common Tree (Optional)
+    - name: Clone common tree
       if: |
         github.event.inputs.COMMON_TREE_URL != null
         && github.event.inputs.COMMON_PATH != null
@@ -130,7 +132,7 @@ jobs:
         git clone ${{ github.event.inputs.COMMON_TREE_URL }} -b ${{ github.event.inputs.DEVICE_TREE_BRANCH }} ./${{ github.event.inputs.COMMON_PATH }}
       working-directory: ${{ steps.pwd.outputs.workspace-folder }}
 
-    - name: 🧪 Detect Build Tree Type
+    - name: Check Build Tree
       uses: haya14busa/action-cond@v1
       id: buildtree
       with:
@@ -138,47 +140,37 @@ jobs:
         if_true: twrp
         if_false: omni
 
-    - name: 📥 Sync Dependencies
+    - name: Sync Device Dependencies
       run: |
         bash ${GITHUB_WORKSPACE}/scripts/convert.sh ${{ github.event.inputs.DEVICE_PATH }}/${{ steps.buildtree.outputs.value }}.dependencies
         repo sync -j$(nproc --all)
       working-directory: ${{ steps.pwd.outputs.workspace-folder }}
       continue-on-error: true
 
-    - name: 📈 Add Swap Space
+    - name: Set Swap Space
       uses: pierotofy/set-swap-space@master
       with:
         swap-size-gb: 12
 
-    - name: 🏗 Build Recovery
+    - name: Building recovery
       run: |
         source build/envsetup.sh
         export ALLOW_MISSING_DEPENDENCIES=true
         lunch ${{ github.event.inputs.MAKEFILE_NAME }}-eng && make clean && make ${{ github.event.inputs.BUILD_TARGET }}image -j$(nproc --all)
       working-directory: ${{ steps.pwd.outputs.workspace-folder }}
 
-    - name: 📂 Debug Output (List Files)
-      run: |
-        ls -lh out/target/product/${{ github.event.inputs.DEVICE_NAME }}
-      working-directory: ${{ steps.pwd.outputs.workspace-folder }}
-
-    - name: 📦 Upload to GitHub Release
+    - name: Upload to Release
       uses: softprops/action-gh-release@v2
       with:
-        files: |
+        files: | 
           out/target/product/${{ github.event.inputs.DEVICE_NAME }}/${{ github.event.inputs.BUILD_TARGET }}.img
           out/target/product/${{ github.event.inputs.DEVICE_NAME }}/*.zip
           out/target/product/${{ github.event.inputs.DEVICE_NAME }}/*vendor*.img
-        name: 📱 ${{ github.event.inputs.DEVICE_NAME }} Build
+        name: ${{ github.event.inputs.DEVICE_NAME }}-${{ github.run_id }}
         tag_name: ${{ github.run_id }}
         body: |
-          📦 **Новый билд TWRP успешно собран!**
-
-          🧱 **Устройство**: `${{ github.event.inputs.DEVICE_NAME }}`
-          🌿 **Ветка манифеста**: `${{ github.event.inputs.MANIFEST_BRANCH }}`
-          🎯 **Цель сборки**: `${{ github.event.inputs.BUILD_TARGET }}.img`
-
-          🔗 Автоматически собран с помощью GitHub Actions.
+          Manifest: ${{ github.event.inputs.MANIFEST_BRANCH }}
+          Device: ${{ github.event.inputs.DEVICE_NAME }}
+          Target: ${{ github.event.inputs.BUILD_TARGET }}.img
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-      working-directory: ${{ steps.pwd.outputs.workspace-folder }}
